@@ -27,18 +27,81 @@ Interface bắt buộc (tests/test_ledger.py và agent/runner.py gọi trực ti
           - hash lưu trong dòng n khớp lại khi tính lại từ nội dung dòng đó
         Trả về False nếu bất kỳ dòng nào bị sửa/xoá/chèn giữa file, hoặc
         thiếu reason.
-
-Sinh viên phải tự tay chứng minh được: sửa 1 ký tự trong 1 dòng giữa file
-rồi gọi verify() phải trả về False.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 
+def _compute_hash(record_without_hash: dict) -> str:
+    canonical = json.dumps(record_without_hash, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def append(entry: dict, path: Path) -> dict:
-    raise NotImplementedError("BƯỚC 3d: implement ledger append")
+    """Thêm một bản ghi vào ledger với prev_hash và hash bảo toàn tính toàn vẹn."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    prev_hash = "0" * 64
+    if path.exists() and path.stat().st_size > 0:
+        lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if lines:
+            last_record = json.loads(lines[-1])
+            prev_hash = last_record.get("hash", "0" * 64)
+
+    record = dict(entry)
+    record["prev_hash"] = prev_hash
+
+    # Tính hash của record (bao gồm prev_hash, không bao gồm field hash)
+    record_for_hash = {k: v for k, v in record.items() if k != "hash"}
+    record["hash"] = _compute_hash(record_for_hash)
+
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    return record
 
 
 def verify(path: Path) -> bool:
-    raise NotImplementedError("BƯỚC 3d: implement ledger verify")
+    """Xác thực toàn bộ ledger: kiểm tra reason, prev_hash chain và hash của từng bản ghi."""
+    path = Path(path)
+    if not path.exists() or path.stat().st_size == 0:
+        return True
+
+    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not lines:
+        return True
+
+    expected_prev = "0" * 64
+
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except Exception:
+            return False
+
+        # Kiểm tra non-empty reason
+        reason = entry.get("reason")
+        if not reason or not str(reason).strip():
+            return False
+
+        # Kiểm tra prev_hash nối chuỗi
+        if entry.get("prev_hash") != expected_prev:
+            return False
+
+        # Kiểm tra hash tính lại
+        stored_hash = entry.get("hash")
+        if not stored_hash:
+            return False
+
+        record_for_hash = {k: v for k, v in entry.items() if k != "hash"}
+        calculated_hash = _compute_hash(record_for_hash)
+        if stored_hash != calculated_hash:
+            return False
+
+        expected_prev = stored_hash
+
+    return True

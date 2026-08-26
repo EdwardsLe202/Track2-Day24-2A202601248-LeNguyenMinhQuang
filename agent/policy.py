@@ -37,4 +37,33 @@ class PolicyContext:
 
 
 def check(context: PolicyContext) -> tuple[bool, str]:
-    raise NotImplementedError("BƯỚC 3b: implement policy check")
+    """Policy Enforcement Point: kiểm tra điều kiện truy cập và egress.
+    
+    Luôn trả về (allow: bool, reason: str) với reason không bao giờ rỗng.
+    """
+    # 1. Rule tối thiểu: Chặn egress khi dữ liệu là restricted / PII
+    if context.data_classification == "restricted" and context.egress_enabled:
+        return (
+            False,
+            f"DENY: Egress bị chặn đối với dữ liệu restricted/PII (agent={context.agent_owner}, purpose={context.request_purpose})"
+        )
+
+    # 2. Rule phân quyền theo agent_owner và data classification
+    if context.data_classification == "restricted" and context.agent_owner == "run-a":
+        return (
+            False,
+            f"DENY: Run A (untrusted context) không được phép truy cập dữ liệu restricted (agent={context.agent_owner})"
+        )
+
+    # 3. Rule độ sâu uỷ quyền (delegation depth)
+    if context.delegation_depth > 3:
+        return (
+            False,
+            f"DENY: Delegation depth={context.delegation_depth} vượt quá ngưỡng an toàn cho phép"
+        )
+
+    # 4. Cho phép các trường hợp hợp lệ kèm lý do rõ ràng
+    return (
+        True,
+        f"ALLOW: Cho phép truy cập dữ liệu {context.data_classification} cho agent={context.agent_owner} với purpose={context.request_purpose}"
+    )
